@@ -13,10 +13,25 @@
 - (CGFloat)version;
 @end
 
-@interface Dialog2 : NSObject <DialogServerProtocol>
-@property (nonatomic) NSConnection* connection;
+@interface Dialog2 : NSObject
+{
+	CFMessagePortRef _port;
+}
 - (id)initWithPlugInController:(id <TMPlugInController>)aController;
+- (void)connectFromClientWithOptions:(id)options;
 @end
+
+// Runs on the main run loop; the request is dispatched after the callback returns so the tool never waits on the command.
+static CFDataRef DialogServerCallback (CFMessagePortRef port, SInt32 messageID, CFDataRef data, void* info)
+{
+	if(data)
+	{
+		id options = [NSPropertyListSerialization propertyListWithData:(__bridge NSData*)data options:NSPropertyListImmutable format:nil error:nil];
+		if([options isKindOfClass:[NSDictionary class]])
+			[(__bridge Dialog2*)info connectFromClientWithOptions:options];
+	}
+	return NULL;
+}
 
 
 @implementation Dialog2
@@ -26,11 +41,17 @@
 	NSApp = NSApplication.sharedApplication;
 	if(self = [self init])
 	{
-		_connection = [NSConnection new];
-		[_connection setRootObject:self];
-
 		NSString* portName = [NSString stringWithFormat:@"%@.%d", kDialogServerConnectionName, getpid()];
-		if([_connection registerName:portName] == NO)
+		CFMessagePortContext context = { 0, (__bridge void*)self, NULL, NULL, NULL };
+		_port = CFMessagePortCreateLocal(kCFAllocatorDefault, (__bridge CFStringRef)portName, &DialogServerCallback, &context, NULL);
+		if(_port)
+		{
+			CFRunLoopSourceRef source = CFMessagePortCreateRunLoopSource(kCFAllocatorDefault, _port, 0);
+			CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
+			CFRelease(source);
+		}
+
+		if(!_port)
 			NSLog(@"couldn't setup dialog server."), NSBeep();
 		else if(NSString* path = [[NSBundle bundleForClass:[self class]] pathForResource:@"tm_dialog2" ofType:nil])
 		{

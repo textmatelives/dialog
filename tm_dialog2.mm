@@ -7,15 +7,19 @@
 
 static double const AppVersion = 2.0;
 
-id connect ()
+static CFMessagePortRef connect ()
 {
 	NSString* portName = kDialogServerConnectionName;
 	if(char const* var = getenv("DIALOG_PORT_NAME"))
 		portName = @(var);
+	return CFMessagePortCreateRemote(kCFAllocatorDefault, (__bridge CFStringRef)portName);
+}
 
-	id proxy = [NSConnection rootProxyForConnectionWithRegisteredName:portName host:nil];
-	[proxy setProtocolForProxy:@protocol(DialogServerProtocol)];
-	return proxy;
+// One-way: the plug-in answers through the FIFOs, not through the port.
+static bool send_options (CFMessagePortRef server, NSDictionary* options)
+{
+	NSData* data = [NSPropertyListSerialization dataWithPropertyList:options format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+	return data && CFMessagePortSendRequest(server, 0, (__bridge CFDataRef)data, 10, 0, NULL, NULL) == kCFMessagePortSuccess;
 }
 
 char const* create_pipe (char const* name)
@@ -56,8 +60,8 @@ int main (int argc, char const* argv[])
 		execv(getenv("DIALOG_1"), (char* const*)argv);
 
 	@autoreleasepool{
-		id<DialogServerProtocol> proxy = connect();
-		if(!proxy)
+		CFMessagePortRef server = connect();
+		if(!server)
 		{
 			fprintf(stderr, "error reaching server\n");
 			exit(EX_UNAVAILABLE);
@@ -80,7 +84,12 @@ int main (int argc, char const* argv[])
 			@"arguments":   args,
 		};
 
-		[proxy connectFromClientWithOptions:dict];
+		if(!send_options(server, dict))
+		{
+			fprintf(stderr, "error sending request to server\n");
+			exit(EX_UNAVAILABLE);
+		}
+		CFRelease(server);
 
 		int inputFd  = open_pipe(stdinName, O_WRONLY);
 		int outputFd = open_pipe(stdoutName, O_RDONLY);
