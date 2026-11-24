@@ -51,13 +51,17 @@
 
 - (void)dispatch:(id)options
 {
-	CLIProxy* interface = [CLIProxy proxyWithOptions:options];
+	// The proxy owns the tool's FIFOs and the tool waits for them to close. Release it here rather than at the next
+	// drain of the outer pool, which a command that runs a nested event loop (the tooltip) can postpone indefinitely.
+	@autoreleasepool {
+		CLIProxy* interface = [CLIProxy proxyWithOptions:options];
 
-	NSString* command = [interface numberOfArguments] <= 1 ? @"help" : [interface argumentAtIndex:1];
+		NSString* command = [interface numberOfArguments] <= 1 ? @"help" : [interface argumentAtIndex:1];
 
-	if(id target = [TMDCommand objectForCommand:command])
-			[target performSelector:@selector(handleCommand:) withObject:interface];
-	else	[interface writeStringToError:@"unknown command, try help.\n"];
+		if(id target = [TMDCommand objectForCommand:command])
+				[target performSelector:@selector(handleCommand:) withObject:interface];
+		else	[interface writeStringToError:@"unknown command, try help.\n"];
+	}
 }
 
 - (void)connectFromClientWithOptions:(id)options
